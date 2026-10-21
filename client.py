@@ -66,9 +66,14 @@ async def main():
                 return
 
 
-            while response.function_calls:
+            max_iterations = 8
+            iteration = 0
+
+            while response.function_calls and iteration < max_iterations:
+                iteration += 1
                 contents.append(response.candidates[0].content)
 
+                function_responses = []
                 for function_call in response.function_calls:
                     print(f"Calling tool: {function_call.name}")
 
@@ -90,17 +95,15 @@ async def main():
                         tool_result = f"Tool execution failed: {e}"
                         is_error = True
 
-
-                    contents.append(
-                        types.Content(
-                            parts=[
-                                types.Part.from_function_response(
-                                    name=function_call.name,
-                                    response={"error" if is_error else "response": tool_result}
-                                )
-                            ]
+                    function_responses.append(
+                        types.Part.from_function_response(
+                            name=function_call.name,
+                            response={"error" if is_error else "response": tool_result}
                         )
                     )
+
+
+                contents.append(types.Content(parts=function_responses))
 
                 try:
                     response = gemini.models.generate_content(

@@ -1,0 +1,4 @@
+Library Policies:
+1. Standard loan duration is 14 days.
+2. Patrons may borrow up to 5 books at a time.
+3. Overdue fine is $0.25 per day.

@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 from mcp.server.mcpserver import MCPServer
 from database.db import Book
 
@@ -6,9 +8,28 @@ mcp = MCPServer("AI Library Search")
 library = Book()
 
 
+POLICY_FILE = Path(__file__).resolve().parent / 'library_policy.txt'
+
+
+# Create a policy file if it doesn't exist
+if not POLICY_FILE.exists():
+    POLICY_FILE.write_text(
+        "Library Policies:\n"
+        "1. Standard loan duration is 14 days.\n"
+        "2. Patrons may borrow up to 5 books at a time.\n"
+        "3. Overdue fine is $0.25 per day.\n"
+    )
+
 @mcp.tool()
-def add_book(title: str, author: str, copies: int) -> str:
-    """Add a book to the library catalog with its title, author, and available copy count."""
+def read_library_policy() -> str:
+    """Read official library rules, loan durations, borrowing limits, and overdue fines from local files."""
+    return POLICY_FILE.read_text(encoding='utf-8')
+
+
+@mcp.tool()
+def add_book(title: str, author: str, copies: int = 1) -> str:
+    """Add a book to the library catalog. Both title and author are required. 
+    If the user has not provided an author, do NOT guess or call this tool—ask the user for the author first."""
     new_book = library.add_book(title, author, copies)
     return f"Book '{new_book}' added successfully."
 
@@ -17,7 +38,16 @@ def add_book(title: str, author: str, copies: int) -> str:
 @mcp.tool()
 def search_book(title: str) -> list:
     """Search the catalog for books with titles containing the provided text."""
-    return library.search_book(title)
+    results = library.search_book(title)
+
+    if not results:
+        return json.dumps({
+            "status": "not_found",
+            "message": f"No books found matching '{title}'.",
+            "recovery_hint": "Try searching with an empty string to view all available titles."
+        })
+
+    return json.dumps(results, indent=2)
 
 
 @mcp.tool()

@@ -37,7 +37,7 @@ class Book:
 
 
     def add_book(self, title: str, author: str, copies: int) -> str:
-        if copies < 0:
+        if copies < 1:
             return "Error: copies can not be negative."
 
         with session() as conn:
@@ -77,7 +77,7 @@ class Book:
 
 
     def update_book(self, id: int, copies: int) -> str:
-        if copies < 0:
+        if copies < 1:
             return "Error: copies can not be negative"
         
         with session() as conn:
