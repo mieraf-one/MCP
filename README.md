@@ -185,6 +185,61 @@ Regarding our library policy:
 
 ---
 
+## 🌐 Stretch Goal: Streamable HTTP with Authentication & RBAC (`antigravity_server.py`)
+
+In addition to the standard stdio server, the project implements an advanced **Streamable HTTP MCP Server** (`antigravity_server.py`) with token authentication and role-based permissions, addressing both assignment stretch goals.
+
+### 1. Key Features
+- **Transport:** Exposes the MCP endpoint over HTTP (`http://127.0.0.1:8000/mcp`) using `transport="streamable-http"`.
+- **Token Authentication:** Implements a custom `LibraryTokenVerifier(TokenVerifier)` and an HTTP POST `/login` endpoint that issues temporary bearer tokens (`TOKEN_LIFETIME = 3600`).
+- **Timing-Attack Protection:** Verifies user credentials using `hmac.compare_digest()`.
+- **Cryptographic Tokens:** Uses `secrets.token_urlsafe(32)` to generate secure access tokens.
+
+### 2. Role-Based Access Control (RBAC)
+Tools are protected with the `require_role(...)` decorator, enforcing two permission tiers:
+
+| Role | Permitted Tools | Description |
+|---|---|---|
+| **`member`** | `search_book`, `borrow_book`, `return_book` | Patrons can search the catalog, borrow books, and return them. |
+| **`librarian`** | `add_book`, `update_book`, + all member tools | Staff members can also acquire new inventory and update copy counts. |
+
+### 3. Running & Testing Streamable HTTP
+
+#### Step 1: Configure Credentials in `.env`
+```env
+LIBRARY_MEMBER_USERNAME="member_user"
+LIBRARY_MEMBER_PASSWORD="member123"
+LIBRARY_LIBRARIAN_USERNAME="librarian_admin"
+LIBRARY_LIBRARIAN_PASSWORD="librarian123"
+```
+
+#### Step 2: Start the HTTP Server
+```bash
+python antigravity_server.py
+```
+
+#### Step 3: Login to obtain a Bearer Token
+```bash
+curl -X POST http://127.0.0.1:8000/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "librarian_admin", "password": "librarian123"}'
+```
+
+**Response:**
+```json
+{
+  "access_token": "your_secure_bearer_token_here",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "role": "librarian"
+}
+```
+
+#### Step 4: Connect via MCP Client or Inspector
+Provide the Bearer token in the `Authorization: Bearer <token>` header when sending JSON-RPC requests to `http://127.0.0.1:8000/mcp`.
+
+---
+
 ## 📂 Project Structure
 
 ```
@@ -192,11 +247,12 @@ ai_library/
 ├── database/
 │   ├── __init__.py
 │   └── db.py               # SQLite database access and schema
-├── server.py               # MCP Server exposing tools and prompt
+├── server.py               # Standard Stdio MCP Server
+├── antigravity_server.py   # Streamable HTTP MCP Server (Auth & RBAC)
 ├── client.py               # Custom MCP Client running Gemini agent loop
 ├── library.db              # SQLite database storage
 ├── library_policy.txt      # Local filesystem policy document
-├── .env                    # Environment variables (API keys)
+├── .env                    # Environment variables (API keys & credentials)
 └── README.md               # Project documentation & summary note
 ```
 
