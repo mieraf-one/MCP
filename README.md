@@ -1,184 +1,187 @@
-# 📚 AI Smart Library Assistant: Model Context Protocol (MCP)
+# 📚 AI Library Assistant (Model Context Protocol)
 
-> **Use Case:** An intelligent conversational AI agent designed for library members and librarians to search catalog availability, manage book loans and returns, inspect official borrowing and fee policies, and generate automated administrative inventory reports.
+> **Use Case:** An AI-powered library assistant designed for patrons and librarians to search catalog availability, manage book checkouts and returns, and inspect library policies using natural language.
 
-This project delivers a complete, production-grade **Model Context Protocol (MCP)** implementation end to end, featuring an MCP Server exposing multiple external resources as typed tools, a user-defined custom MCP Client with an autonomous multi-turn LLM agent loop, an interactive CLI application, and automated verification suites.
+This project implements an end-to-end **Model Context Protocol (MCP)** application consisting of an MCP Server that exposes tools over SQLite and local files, and a custom user-defined MCP Client that connects the server's tools to Google's Gemini LLM.
 
 ---
 
-## 🏛 Architecture Overview
+## 📝 Summary Note: Architecture & How Pieces Fit Together
+
+### 1. What Was Built
+- **`database/db.py` (Database Layer):** A Python SQLite wrapper managing `library.db` with thread-safe connections, table initialization, and CRUD operations for books and available copies.
+- **`server.py` (MCP Server):** A Model Context Protocol server built with `mcp.server.mcpserver.MCPServer`. It exposes six typed tools (five database tools + one local file tool) and one prompt (`find_book_prompt`). Operates cleanly over `stdio` without corrupting stdout.
+- **`client.py` (Custom MCP Client):** A user-defined client that launches the server process, connects via `stdio_client`, dynamically queries `session.list_tools()`, maps them to Gemini `FunctionDeclaration` objects, and orchestrates an autonomous multi-turn tool calling loop.
+- **`library_policy.txt` (Local Filesystem Resource):** A text document containing official borrowing duration rules, checkout limits, and late fee structures.
+
+### 2. How the Pieces Fit Together
 
 ```
- ┌──────────────────────────────────────────────────────────────┐
- │                     User / Client Shell                      │
- │      (library_agent_app.py  /  demo_task.py  /  REPL)        │
- └──────────────────────────────┬───────────────────────────────┘
-                                │
-                                ▼
- ┌──────────────────────────────────────────────────────────────┐
- │             Custom MCP Client (library_mcp_client.py)        │
- │  • Initializes stdio / HTTP ClientSession                    │
- │  • Discovers Server Tools, Resources, and Prompts            │
- │  • Maps MCP Schemas to LLM Function Declarations             │
- │  • Orchestrates Autonomous Multi-Turn Reasoning Loop         │
- └──────────────┬───────────────────────────────▲───────────────┘
-                │ JSON-RPC (stdio / HTTP)       │ Function Responses
-                ▼                               │
- ┌──────────────────────────────────────────────────────────────┐
- │             MCP Server (library_mcp_server.py)               │
- │  • Pure Stdio (stdout strictly reserved for JSON-RPC framing)│
- │  • Stderr & File logging for debugging and audit safety       │
- │  • Exposes 7 typed tools, 2 live resources, 2 prompt templates│
- └──────────────┬───────────────────────────────┬───────────────┘
-                │                               │
-                ▼                               ▼
- ┌──────────────────────────────┐ ┌──────────────────────────────┐
- │ Resource 1: SQLite Database  │ │ Resource 2: Local Filesystem │
- │ • Catalog Table (books)      │ │ • Policy Docs (Markdown)     │
- │ • Loan Records Table         │ │ • Exported Circulation Rpts  │
- │ • Real-time Inventory Counts │ │ • Structured Audit Event Log │
- └──────────────────────────────┘ └──────────────────────────────┘
+ [ User Prompt in Terminal ]
+              │
+              ▼
+    ┌───────────────────┐
+    │     client.py     │ <───── (1) Connects via stdio & discovers tools
+    └─────────┬─────────┘
+              │
+              ├───────────────────────────────────┐
+              ▼                                   ▼
+    ┌───────────────────┐               ┌───────────────────┐
+    │ Gemini 3.8 Flash  │               │     server.py     │
+    │  (LLM Reasoning)  │               │   (MCP Server)    │
+    └─────────┬─────────┘               └─────────┬─────────┘
+              │                                   │
+              │ (2) Generates Tool Call           │ (3) Executes Tool
+              └──────────────────────────────────>│
+                                                  ├──────────────┬──────────────┐
+                                                  ▼                             ▼
+                                        ┌───────────────────┐         ┌───────────────────┐
+                                        │  database/db.py   │         │ library_policy.txt│
+                                        │ (Resource 1: DB)  │         │ (Resource 2: File)│
+                                        └───────────────────┘         └───────────────────┘
 ```
 
----
-
-## 🔌 External Resources
-
-The application connects to **two distinct external resources**:
-
-1. **Resource 1: SQLite Catalog & Circulation Database (`library.db`)**
-   - **Catalog Table (`books`)**: Maintains book IDs, titles, authors, and available copies.
-   - **Circulation Table (`borrow_records`)**: Tracks active and returned loans with patron names, checkout timestamps, and loan status.
-   - **Live In-Memory Aggregations**: Computes real-time catalog statistics, active loan ratios, and copy counts.
-
-2. **Resource 2: Local Filesystem Storage (`data/`)**
-   - **Policy Documents (`data/policies/*.md`)**: Official guidelines for `general` borrowing rules (14-day checkout, 5-book limit), `fines` ($0.25/day overdue penalty, grace periods), and `renewals` (2-time limit).
-   - **Exported Reports (`data/reports/*.md`)**: Auto-generated Markdown circulation audit reports capturing inventory summaries and active borrower records.
-   - **Operational Audit Log (`data/logs/audit.log`)**: Append-only JSON-lines record of every library action for compliance and activity tracking.
+1. **Discovery:** When `client.py` starts, it initializes an MCP session with `server.py` and inspects all registered tools.
+2. **LLM Tool Binding:** The client converts MCP JSON schemas into Gemini function declarations and delivers them with the user's prompt to Gemini.
+3. **Execution Loop:** When Gemini decides to call tools (e.g. `search_book` and `read_library_policy`), the client catches the function calls, executes them via `session.call_tool()`, and feeds the results back to Gemini.
+4. **Final Response:** Gemini synthesizes the structured tool results into a natural, conversational response for the user.
 
 ---
 
-## 🛠 MCP Tools Specification
+## 🔌 External Resources Used
 
-All tools feature **typed schemas**, comprehensive docstrings, and **actionable error recovery hints** returned directly in results so the LLM can self-correct when an invalid ID or out-of-stock item is encountered.
+The application interfaces with **two distinct external resources**:
+1. **Resource 1: SQLite Database (`library.db`)**
+   - Stores catalog records (`id`, `title`, `author`, `available_copies`).
+2. **Resource 2: Local Filesystem (`library_policy.txt`)**
+   - Stores official library rules regarding checkout limits (5 books), loan durations (14 days), and overdue fines ($0.25/day).
 
-### 1. Catalog & Circulation Tools (Resource 1: Database)
+---
+
+## 🛠️ List of Tools & Example Calls
 
 | Tool Name | Parameters | Description |
 |---|---|---|
-| `search_books` | `query: str = ""` (title keyword)<br>`author: str = ""` (author keyword) | Search the catalog database by title or author. Returns book IDs, titles, authors, and available copy counts. |
-| `add_book` | `title: str` (non-empty)<br>`author: str` (non-empty)<br>`copies: int = 1` (>= 1) | Add a new book title or replenish available copies of an existing title in the catalog. |
-| `borrow_book` | `book_id: int` (catalog ID)<br>`patron_name: str` (borrower name) | Check out a book copy for a patron. Decrements available copies and registers an active loan. |
-| `return_book` | `book_id: int` (catalog ID)<br>`patron_name: str = ""` | Return a borrowed book into inventory, increasing shelf copies and closing active loans. |
+| `search_book` | `title: str = ""` | Search catalog for books matching a title keyword. |
+| `add_book` | `title: str`, `author: str`, `copies: int = 1` | Add a new book or replenish copies in inventory. |
+| `update_book` | `id: int`, `copies: int` | Update the available copy count of a book by ID. |
+| `borrow_book` | `id: int` | Borrow one available copy of a book by ID. |
+| `return_book` | `id: int` | Return a copy of a book to the library by ID. |
+| `read_library_policy` | *(None)* | Read loan duration, limits, and fine rules from local disk. |
 
-### 2. Filesystem & Documentation Tools (Resource 2: Filesystem)
+### Example Tool Calls (JSON-RPC)
 
-| Tool Name | Parameters | Description |
-|---|---|---|
-| `read_library_policy` | `topic: str = "general"`<br>(Options: `'general'`, `'fines'`, `'renewals'`) | Reads Markdown policy documents from the local filesystem. Provides borrowing rules, fee schedules, or renewal limits. |
-| `export_circulation_report` | `report_title: str = "Daily Circulation Summary"` | Compiles current database metrics and writes a timestamped Markdown report into `data/reports/`. |
-| `view_audit_logs` | `limit: int = 10` (max 50) | Reads the most recent chronological audit events from `data/logs/audit.log`. |
+#### 1. Search for a Book
+```json
+{
+  "name": "search_book",
+  "arguments": {
+    "title": "Ethiopia"
+  }
+}
+```
+**Example Result:**
+```json
+[
+  {
+    "id": 3,
+    "title": "Ethiopia",
+    "author": "Elyas",
+    "available_copies": 7
+  }
+]
+```
+
+#### 2. Borrow a Book
+```json
+{
+  "name": "borrow_book",
+  "arguments": {
+    "id": 3
+  }
+}
+```
+**Example Result:**
+`"Book 3 borrowed successfully"`
+
+#### 3. Read Library Policy
+```json
+{
+  "name": "read_library_policy",
+  "arguments": {}
+}
+```
+**Example Result:**
+`"Library Policies:\n1. Standard loan duration is 14 days.\n2. Patrons may borrow up to 5 books at a time.\n3. Overdue fine is $0.25 per day."`
 
 ---
 
-## 🌟 Stretch Goals Implemented
-
-- ✅ **Dual Transport Support:** Runs over standard `stdio` (default) or **Streamable HTTP** (`--transport streamable-http --port 8000`).
-- ✅ **MCP Resources:**
-  - `library://catalog/summary`: Live JSON snapshot of total titles, total shelf copies, and active checkouts.
-  - `library://policies/borrowing_rules`: Full text of official library circulation policies.
-- ✅ **MCP Prompts:**
-  - `borrow_workflow_prompt`: Guided multi-step prompt for searching, policy validation, and borrowing.
-  - `circulation_audit_prompt`: Administrative workflow for auditing system logs and exporting reports.
-- ✅ **Custom User-Defined MCP Client (`library_mcp_client.py`):**
-  - Fully written from scratch using Python `mcp` SDK.
-  - Dynamic discovery via `session.list_tools()`.
-  - Native multi-turn autonomous agent loop with Gemini API (`google-genai`).
-  - Automatic model fallback and retry resilience.
-
----
-
-## 🚀 Quickstart & Setup
+## ⚙️ Setup and Installation
 
 ### 1. Prerequisites
 - Python 3.10+
-- Node.js & `npx` (optional, for MCP Inspector)
+- Node.js & `npx` (for testing with the MCP Inspector)
 
-### 2. Environment Setup
-Clone the repository and activate your virtual environment:
-
+### 2. Virtual Environment & Dependencies
 ```bash
+# Clone the repository
+git clone <your-repo-url>
 cd ai_library
-source ../.venv/bin/activate
+
+# Create and activate virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Install required packages
+pip install mcp google-genai python-dotenv
 ```
 
-Create or verify your `.env` file in the project or parent directory:
+### 3. Environment Variables
+Create a `.env` file in the project directory:
 ```env
-GEMINI_API_KEY="your-gemini-api-key-here"
+GEMINI_API_KEY="your-google-gemini-api-key"
 GEMINI_MODEL="gemini-3.8-flash"
-```
-
-### 3. Install Dependencies
-```bash
-pip install mcp mcp-types google-genai python-dotenv starlette uvicorn
 ```
 
 ---
 
 ## 🧪 Testing with MCP Inspector
 
-Before connecting custom clients, verify the MCP Server using the official `@modelcontextprotocol/inspector`:
+Test your server tools using the official MCP Inspector:
 
 ```bash
-npx @modelcontextprotocol/inspector /home/ela/Documents/codeProjects/icog/Trainings/training-6/.venv/bin/python library_mcp_server.py
+npx @modelcontextprotocol/inspector python server.py
 ```
 
-The inspector UI allows you to interactively:
-1. View all 7 registered tools with their input JSON schemas.
-2. Execute tool calls (e.g. `search_books` or `read_library_policy`) and inspect JSON responses.
-3. Inspect exposed resources (`library://catalog/summary`).
-4. Trigger prompts (`borrow_workflow_prompt`).
+1. Open the inspector URL in your browser.
+2. Click **Connect**.
+3. Under the **Tools** tab, test `search_book` and `read_library_policy`.
+4. Under the **Prompts** tab, test `find_book_prompt`.
 
 ---
 
-## 💻 Running the Application
+## 🚀 Running the Application
 
-### 1. Interactive AI Assistant (REPL)
-Launch the interactive assistant shell:
+Run the custom MCP client:
+
 ```bash
-python library_agent_app.py
+python client.py
 ```
 
-Interactive commands:
-- Type natural questions: *"Can you find Dune and check out a copy for Alice?"*
-- `/tools`: List all tools loaded dynamically from the MCP server.
-- `/resources`: List available MCP resources.
-- `/summary`: Read live catalog summary resource snapshot.
-- `/rules`: Read library borrowing guidelines.
-- `/help`: Show command help.
-- `/quit`: Exit.
+### Example Multi-Tool Interaction:
 
-### 2. Single Command-Line Query
-Execute a single instruction directly through the agent loop:
-```bash
-python library_agent_app.py --prompt "What is our policy on overdue fines, and export a circulation report."
+```text
+What do you want? "Can you search for the book 'Ethiopia' and also tell me what our library policy is regarding loan periods?"
+Calling tool: search_book
+Calling tool: read_library_policy
+
+Gemini: I found one book titled "Ethiopia" in our catalog, written by Elyas, with 7 copies currently available.
+
+Regarding our library policy:
+* Loan duration: The standard loan period is 14 days.
+* Borrowing limit: You may borrow up to 5 books at a time.
+* Fines: The overdue fine is $0.25 per day.
 ```
-
-### 3. Automated End-to-End Demo Script
-Run the automated verification demo testing all tools and resources:
-```bash
-python demo_task.py
-```
-
-**Demo Execution Workflow:**
-1. Connects to `library_mcp_server.py` over MCP `stdio`.
-2. Discovers tools, resources, and prompt definitions.
-3. Searches catalog database for book availability (Resource 1: DB).
-4. Borrows a copy for patron 'Alice Smith' (Resource 1: DB).
-5. Reads borrowing rules and grace periods from disk (Resource 2: Filesystem).
-6. Exports a circulation markdown audit report to `data/reports/` (Resource 2: Filesystem).
-7. Reads recent audit trail logs (Resource 2: Filesystem).
-8. Reads dynamic MCP resource `library://catalog/summary`.
 
 ---
 
@@ -186,23 +189,20 @@ python demo_task.py
 
 ```
 ai_library/
-├── ai_library_service.py      # Core service handling SQLite DB and local filesystem resources
-├── library_mcp_server.py      # Stdio & Streamable HTTP MCP Server with tools, resources, prompts
-├── library_mcp_client.py      # Custom MCP Client & multi-turn LLM agent loop
-├── library_agent_app.py       # Interactive CLI end-user AI library application
-├── demo_task.py               # Automated end-to-end demonstration script
-├── library.db                 # SQLite database file (books & borrow_records)
-├── data/
-│   ├── policies/              # Policy markdown files (general.md, fines.md, renewals.md)
-│   ├── reports/               # Auto-generated circulation reports
-│   └── logs/                  # Audit log (audit.log) & server logs
-├── README.md                  # Comprehensive project documentation
-└── SUMMARY.md                 # Architecture summary note
+├── database/
+│   ├── __init__.py
+│   └── db.py               # SQLite database access and schema
+├── server.py               # MCP Server exposing tools and prompt
+├── client.py               # Custom MCP Client running Gemini agent loop
+├── library.db              # SQLite database storage
+├── library_policy.txt      # Local filesystem policy document
+├── .env                    # Environment variables (API keys)
+└── README.md               # Project documentation & summary note
 ```
 
 ---
 
 ## 🔒 Safety & Standards
-- **Zero Stdout Contamination:** In stdio mode, Python standard logging is restricted to `sys.stderr` and disk log files. Stdout is exclusively reserved for JSON-RPC protocol framing.
-- **Secret Protection:** API keys and credentials are read strictly from `.env` and environment variables; never hardcoded or printed to stdout.
-- **Actionable Error Feedback:** Exceptions and validation failures return informative error structures with recovery suggestions so the AI agent can self-heal.
+- **Stdio Safety:** The server never prints debug text to `stdout`, keeping JSON-RPC framing intact.
+- **Secrets:** API keys are loaded via `python-dotenv` from `.env` and kept out of version control.
+- **Loop Guards:** The client enforces an iteration limit (`max_iterations = 8`) to prevent runaway loops.
