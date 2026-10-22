@@ -32,13 +32,9 @@ client = genai.Client(
     api_key=os.getenv("GEMINI_API_KEY")
 )
 
-# Load Cloudflare URL from .env
-_tunnel_url = os.getenv("CLOUDFLARE_URL", "").rstrip("/")
-if _tunnel_url:
-    MCP_SERVER_URL = f"{_tunnel_url}/mcp" if not _tunnel_url.endswith("/mcp") else _tunnel_url
-else:
-    MCP_SERVER_URL = "http://127.0.0.1:8000/mcp"
-
+MCP_SERVER_URL = (
+    "https://automobile-toolkit-libs-encourages.trycloudflare.com/mcp"
+)
 
 
 def main():
