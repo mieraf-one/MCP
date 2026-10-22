@@ -13,6 +13,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.auth.middleware.auth_context import get_access_token
+from mcp.server.transport_security import TransportSecuritySettings
 
 from database.db import Book
 
@@ -259,8 +260,13 @@ def return_book(id: int) -> str:
 # --------------------------------------------------
 
 if __name__ == "__main__":
+    security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=False
+    )
+
     mcp.run(
         transport="streamable-http",
         host=HOST,
         port=PORT,
+        transport_security=security,
     )
